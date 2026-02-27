@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Past Dates - AttendSmart{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2>📋 Pending Past Dates</h2>
+    <p>Days with classes but attendance not yet marked</p>
+</div>
+{% if not pending_dates %}
+<div class="empty-state">
+    <div style="font-size:3rem">🎉</div>
+    <h3>All caught up!</h3>
+    <p>No pending attendance dates.</p>
+    <a href="{{ url_for('dashboard') }}" class="btn-primary">Back to Dashboard</a>
+</div>
+{% else %}
+<div class="card">
+    <div class="pending-count">⚠️ {{ pending_dates|length }} date(s) need your attendance</div>
+    <div class="pending-list">
+        {% for d in pending_dates | reverse %}
+        <div class="pending-row">
+            <div>
+                <span class="pending-day">{{ d.strftime('%A') }}</span>
+                <span class="pending-date">{{ d.strftime('%d %B %Y') }}</span>
+                {% if d.weekday() == 5 %}<span class="saturday-badge">Saturday</span>{% endif %}
+            </div>
+            <a href="{{ url_for('mark_attendance', date=d.isoformat()) }}" class="btn-mark">Mark →</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
