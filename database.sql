@@ -73,3 +73,34 @@ CREATE TABLE IF NOT EXISTS day_config (
     UNIQUE KEY unique_day (user_id, day_of_week),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Saturday working day config (per specific date, not per weekday)
+CREATE TABLE IF NOT EXISTS saturday_config (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    sat_date DATE NOT NULL,
+    is_working TINYINT DEFAULT 1,    -- 1=working day, 0=holiday
+    total_periods INT DEFAULT 0,
+    UNIQUE KEY unique_sat (user_id, sat_date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Custom period-to-subject mapping for a specific Saturday
+-- is_free = 1 means this period is a Free Hour (subject_id will be NULL)
+CREATE TABLE IF NOT EXISTS saturday_slots (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    sat_date DATE NOT NULL,
+    period_number INT NOT NULL,
+    subject_id INT DEFAULT NULL,      -- NULL if free hour
+    slot_label VARCHAR(20) DEFAULT '',
+    is_free TINYINT DEFAULT 0,        -- 1 = free hour
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
+
+-- ─────────────────────────────────────────────────────
+-- MIGRATION: Run this if upgrading an existing database
+-- ─────────────────────────────────────────────────────
+-- ALTER TABLE saturday_slots MODIFY COLUMN subject_id INT DEFAULT NULL;
+-- ALTER TABLE saturday_slots ADD COLUMN IF NOT EXISTS is_free TINYINT DEFAULT 0;

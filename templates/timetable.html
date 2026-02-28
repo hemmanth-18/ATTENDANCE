@@ -4,7 +4,13 @@
 <div class="page-header">
     <div>
         <h2>📅 Your Weekly Timetable</h2>
-        <p>{{ user[6].strftime('%d %b %Y') }} → {{ user[7].strftime('%d %b %Y') }}</p>
+        <p>
+            {% if user[6] and user[7] %}
+                {{ user[6].strftime('%d %b %Y') }} → {{ user[7].strftime('%d %b %Y') }}
+            {% else %}
+                Semester dates not set
+            {% endif %}
+        </p>
     </div>
     <a href="{{ url_for('setup_step1') }}" class="btn-secondary">Edit Timetable</a>
 </div>
