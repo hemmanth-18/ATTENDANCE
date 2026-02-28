@@ -31,7 +31,6 @@
                 {% for sl in existing_slots %}
                 <div class="sat-slot-row">
                     <span class="period-badge">P{{ sl[1] }}</span>
-                    <span class="sat-slot-time">{{ sl[2] }}</span>
                     <span class="sat-slot-name">
                         {% if sl[5] %}🔓 Free Hour{% else %}{{ sl[4] }}{% endif %}
                     </span>
@@ -108,7 +107,6 @@
 
 <script>
 const SUBJECTS = [{% for sid, sname in subjects_dict.items() %}{ id: {{ sid }}, name: {{ sname|tojson }} },{% endfor %}];
-const TIMES    = {{ slot_times|tojson }};
 
 function showWorking() {
     document.getElementById('sat-choices').style.display  = 'none';
@@ -137,13 +135,10 @@ function buildPeriodForm(n) {
     });
     let html = '';
     for (let i = 1; i <= n; i++) {
-        const t    = TIMES[i - 1] || ('Period ' + i);
         const opts = `<option value="FREE">🔓 Free Hour</option>` + SUBJECTS.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
         html += `
         <div class="sat-period-entry">
             <span class="period-badge">P${i}</span>
-            <span class="sat-ptime">${t}</span>
-            <input type="hidden" name="period_${i}_time" value="${t}">
             <select name="period_${i}_subject" class="sat-subj-select" required>
                 <option value="">— Select subject —</option>${opts}
             </select>

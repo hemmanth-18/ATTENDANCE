@@ -104,3 +104,31 @@ CREATE TABLE IF NOT EXISTS saturday_slots (
 -- ─────────────────────────────────────────────────────
 -- ALTER TABLE saturday_slots MODIFY COLUMN subject_id INT DEFAULT NULL;
 -- ALTER TABLE saturday_slots ADD COLUMN IF NOT EXISTS is_free TINYINT DEFAULT 0;
+
+-- ─────────────────────────────────────────────────────
+-- PROFILE & MULTI-SEMESTER SUPPORT
+-- ─────────────────────────────────────────────────────
+
+-- Add profile photo to users
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS photo VARCHAR(255) DEFAULT NULL;
+
+-- Semesters table: each user can have multiple semesters
+-- The "active" semester is used for current dashboard calculations
+CREATE TABLE IF NOT EXISTS semesters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    semester_number INT NOT NULL,       -- e.g. 1, 2, 3...
+    semester_label VARCHAR(50) DEFAULT '', -- e.g. "Sem 3 - 2025"
+    branch VARCHAR(100),
+    sem_start DATE NOT NULL,
+    sem_end DATE NOT NULL,
+    is_active TINYINT DEFAULT 0,        -- 1 = currently active semester
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- MIGRATION for existing databases:
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS photo VARCHAR(255) DEFAULT NULL;
+-- INSERT INTO semesters (user_id, semester_number, semester_label, branch, sem_start, sem_end, is_active)
+-- SELECT id, semester, CONCAT('Sem ', semester, ' (migrated)'), branch, semester_start, semester_end, 1
+-- FROM users WHERE setup_done=1;

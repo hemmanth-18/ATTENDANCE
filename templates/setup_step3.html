@@ -36,12 +36,9 @@
         </div>
         <div class="tt-periods">
             {% for period in range(1, total_periods + 1) %}
-            {% set slot_time = slot_times[period-1] if period <= slot_times|length else 'Period ' ~ period %}
             <div class="tt-period-row">
                 <div class="tt-period-info">
-                    <span class="tt-period-num">P{{ period }}</span>
-                    <span class="tt-period-time">{{ slot_time }}</span>
-                </div>
+                    <span class="tt-period-num">P{{ period }}</span>                </div>
                 <select name="slot_{{ day_idx }}_{{ period }}" class="tt-subject-select">
                     <option value="">— No Class —</option>
                     <option value="FREE" class="free-option">🔓 Free Hour</option>
