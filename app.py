@@ -6,7 +6,7 @@ from flask_mysqldb import MySQL
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, timedelta, datetime
 import math
-
+#importing math
 app = Flask(__name__)
 app.secret_key = 'attendsmart3_secret_2024'
 
