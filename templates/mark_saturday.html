@@ -25,7 +25,6 @@
         <div class="submitted-row">
             <div class="submitted-left">
                 <span class="period-badge">P{{ slot[1] }}</span>
-                <span class="period-time">{{ slot[2] }}</span>
                 <span class="period-subject">🔓 Free Hour <span style="color:#aaa;font-size:0.82em;">(Skipped)</span></span>
             </div>
             <span class="status-badge" style="background:#f5f5f5;color:#aaa;">— Skipped</span>
@@ -34,7 +33,6 @@
         <div class="submitted-row">
             <div class="submitted-left">
                 <span class="period-badge">P{{ slot[1] }}</span>
-                <span class="period-time">{{ slot[2] }}</span>
                 <span class="period-subject">
                     {% if is_free %}
                         🔓 Free Hour → {{ subjects_dict.get(free_chosen.get(slot_id), '?') }}
@@ -66,7 +64,6 @@
     {% for slot in sat_slots %}
     {% set slot_id   = slot[0] %}
     {% set period    = slot[1] %}
-    {% set stime     = slot[2] %}
     {% set orig_id   = slot[3] %}
     {% set orig_name = slot[4] %}
     {% set is_free   = slot[5] %}
@@ -75,7 +72,6 @@
         <div class="period-left">
             <span class="period-badge">P{{ period }}</span>
             <div class="period-details">
-                <span class="period-time-label">{{ stime }}</span>
                 <span class="period-name">
                     {% if is_free %}🔓 Free Hour{% else %}{{ orig_name }}{% endif %}
                 </span>

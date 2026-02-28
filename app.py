@@ -1,6 +1,8 @@
 import pymysql
 pymysql.install_as_MySQLdb()
 #hell all
+import os
+from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from flask_mysqldb import MySQL
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -9,6 +11,14 @@ import math
 #importing math
 app = Flask(__name__)
 app.secret_key = 'attendsmart3_secret_2024'
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
@@ -181,6 +191,15 @@ def login():
         if user and check_password_hash(user[3], password):
             session['user_id'] = user[0]
             session['user_name'] = user[1]
+            # Load photo if column exists
+            try:
+                cur2 = mysql.connection.cursor()
+                cur2.execute("SELECT photo FROM users WHERE id=%s", (user[0],))
+                pr = cur2.fetchone()
+                session['user_photo'] = pr[0] if pr and pr[0] else None
+                cur2.close()
+            except:
+                session['user_photo'] = None
             if not user[8]:
                 return redirect(url_for('setup_step1'))
             return redirect(url_for('dashboard'))
@@ -325,8 +344,10 @@ def dashboard():
     if not user[8]:
         return redirect(url_for('setup_step1'))
 
-    sem_start = user[6]
-    sem_end = user[7]
+    # Use active semester if available, fall back to users table dates
+    _active_sem = get_active_semester(user_id)
+    sem_start = _active_sem[5] if _active_sem else user[6]
+    sem_end   = _active_sem[6] if _active_sem else user[7]
     today = date.today()
 
     cur = mysql.connection.cursor()
@@ -929,6 +950,243 @@ def chart_data(subject_id):
         pcts.append(min(100.0, round(attended / total * 100, 1)))
 
     return jsonify({"labels": labels, "pcts": pcts})
+
+
+# ─────────────────────────────────────────────────────
+# PROFILE
+# ─────────────────────────────────────────────────────
+
+def get_active_semester(user_id):
+    """Get the active semester for a user, or None."""
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM semesters WHERE user_id=%s AND is_active=1 ORDER BY id DESC LIMIT 1", (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+def ensure_semester_exists(user_id, user):
+    """For existing users without a semesters row, create one from users table."""
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT id FROM semesters WHERE user_id=%s", (user_id,))
+    if not cur.fetchone():
+        # Migrate from users table
+        if user[6] and user[7]:
+            cur.execute("""
+                INSERT INTO semesters (user_id, semester_number, semester_label, branch, sem_start, sem_end, is_active)
+                VALUES (%s,%s,%s,%s,%s,%s,1)
+            """, (user_id, user[4] or 1, f"Sem {user[4] or 1} (imported)", user[5] or '', user[6], user[7]))
+            mysql.connection.commit()
+    cur.close()
+
+@app.route('/profile', methods=['GET', 'POST'])
+def profile():
+    user = validate_session()
+    if not user:
+        return redirect(url_for('login'))
+    user_id = user[0]
+    ensure_semester_exists(user_id, user)
+
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM semesters WHERE user_id=%s ORDER BY id DESC", (user_id,))
+    all_sems = cur.fetchall()
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'update_profile':
+            new_name = request.form.get('name', '').strip()
+            new_password = request.form.get('new_password', '').strip()
+            current_password = request.form.get('current_password', '').strip()
+
+            # Handle photo upload
+            photo_filename = None
+            if 'photo' in request.files:
+                f = request.files['photo']
+                if f and f.filename and allowed_file(f.filename):
+                    ext = f.filename.rsplit('.', 1)[1].lower()
+                    photo_filename = f"user_{user_id}.{ext}"
+                    # Remove old photos with different extensions
+                    for e in ALLOWED_EXTENSIONS:
+                        old_path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}.{e}")
+                        if os.path.exists(old_path) and e != ext:
+                            os.remove(old_path)
+                    f.save(os.path.join(UPLOAD_FOLDER, photo_filename))
+
+            # Update name
+            if new_name:
+                cur.execute("UPDATE users SET name=%s WHERE id=%s", (new_name, user_id))
+                session['user_name'] = new_name
+
+            # Update photo column if uploaded
+            if photo_filename:
+                try:
+                    cur.execute("UPDATE users SET photo=%s WHERE id=%s", (photo_filename, user_id))
+                except:
+                    pass  # column may not exist yet in older DBs
+                session['user_photo'] = photo_filename
+
+            # Update password
+            if new_password:
+                if not current_password or not check_password_hash(user[3], current_password):
+                    flash('Current password is incorrect!', 'error')
+                    cur.close()
+                    return redirect(url_for('profile'))
+                if len(new_password) < 6:
+                    flash('New password must be at least 6 characters!', 'error')
+                    cur.close()
+                    return redirect(url_for('profile'))
+                cur.execute("UPDATE users SET password=%s WHERE id=%s",
+                            (generate_password_hash(new_password), user_id))
+
+            mysql.connection.commit()
+            flash('Profile updated successfully! ✅', 'success')
+
+        elif action == 'add_semester':
+            sem_num = request.form.get('semester_number', '1')
+            sem_label = request.form.get('semester_label', '').strip()
+            branch = request.form.get('branch', '').strip()
+            sem_start = request.form.get('sem_start', '')
+            sem_end = request.form.get('sem_end', '')
+            make_active = request.form.get('make_active') == '1'
+
+            if not sem_start or not sem_end:
+                flash('Please fill in semester dates!', 'error')
+                cur.close()
+                return redirect(url_for('profile'))
+
+            if make_active:
+                cur.execute("UPDATE semesters SET is_active=0 WHERE user_id=%s", (user_id,))
+
+            cur.execute("""
+                INSERT INTO semesters (user_id, semester_number, semester_label, branch, sem_start, sem_end, is_active)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (user_id, int(sem_num), sem_label or f"Sem {sem_num}", branch, sem_start, sem_end,
+                  1 if make_active else 0))
+
+            if make_active:
+                # Update users table too for compatibility
+                cur.execute("UPDATE users SET semester=%s, branch=%s, semester_start=%s, semester_end=%s WHERE id=%s",
+                            (int(sem_num), branch, sem_start, sem_end, user_id))
+
+            mysql.connection.commit()
+            flash('Semester added! ✅', 'success')
+
+        elif action == 'switch_semester':
+            sem_id = int(request.form.get('sem_id', 0))
+            if sem_id:
+                cur.execute("UPDATE semesters SET is_active=0 WHERE user_id=%s", (user_id,))
+                cur.execute("UPDATE semesters SET is_active=1 WHERE id=%s AND user_id=%s", (sem_id, user_id))
+                # Update users table for compatibility
+                cur.execute("SELECT semester_number, branch, sem_start, sem_end FROM semesters WHERE id=%s", (sem_id,))
+                s = cur.fetchone()
+                if s:
+                    cur.execute("UPDATE users SET semester=%s, branch=%s, semester_start=%s, semester_end=%s WHERE id=%s",
+                                (s[0], s[1], s[2], s[3], user_id))
+                mysql.connection.commit()
+                flash('Switched to selected semester! ✅', 'success')
+
+        elif action == 'edit_semester':
+            sem_id = int(request.form.get('sem_id', 0))
+            sem_start = request.form.get('sem_start', '')
+            sem_end = request.form.get('sem_end', '')
+            sem_label = request.form.get('semester_label', '').strip()
+            branch = request.form.get('branch', '').strip()
+            if sem_id and sem_start and sem_end:
+                cur.execute("""
+                    UPDATE semesters SET sem_start=%s, sem_end=%s, semester_label=%s, branch=%s
+                    WHERE id=%s AND user_id=%s
+                """, (sem_start, sem_end, sem_label, branch, sem_id, user_id))
+                # Also update users table if this is the active semester
+                cur.execute("SELECT is_active FROM semesters WHERE id=%s", (sem_id,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    cur.execute("UPDATE users SET semester_start=%s, semester_end=%s, branch=%s WHERE id=%s",
+                                (sem_start, sem_end, branch, user_id))
+                mysql.connection.commit()
+                flash('Semester updated! ✅', 'success')
+
+        cur.close()
+        return redirect(url_for('profile'))
+
+    # GET: load user photo
+    photo = None
+    try:
+        cur.execute("SELECT photo FROM users WHERE id=%s", (user_id,))
+        row = cur.fetchone()
+        photo = row[0] if row else None
+    except:
+        pass
+    cur.close()
+
+    return render_template('profile.html',
+        user=user, all_sems=all_sems, photo=photo,
+        today=date.today()
+    )
+
+@app.route('/api/semester_stats/<int:sem_id>')
+def semester_stats(sem_id):
+    """Return attendance summary for a given semester (for the history view)."""
+    user = validate_session()
+    if not user:
+        return jsonify({})
+    user_id = user[0]
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM semesters WHERE id=%s AND user_id=%s", (sem_id, user_id))
+    sem = cur.fetchone()
+    if not sem:
+        cur.close()
+        return jsonify({})
+
+    sem_start, sem_end = sem[5], sem[6]
+    # Get all attendance for this date range
+    cur.execute("""
+        SELECT s.subject_name,
+               SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as attended,
+               COUNT(*) as total
+        FROM attendance a
+        JOIN subjects s ON a.subject_id = s.id
+        WHERE a.user_id=%s AND a.class_date BETWEEN %s AND %s
+        GROUP BY s.subject_name
+        ORDER BY s.subject_name
+    """, (user_id, sem_start, sem_end))
+    rows = cur.fetchall()
+    cur.close()
+    data = [{"subject": r[0], "attended": int(r[1]), "total": int(r[2]),
+             "pct": round(r[1]/r[2]*100, 1) if r[2] > 0 else 0} for r in rows]
+    return jsonify({"semester": sem[3], "start": str(sem_start), "end": str(sem_end), "subjects": data})
+
+@app.route('/api/upload_photo', methods=['POST'])
+def upload_photo():
+    user = validate_session()
+    if not user:
+        return jsonify({'ok': False, 'error': 'Not logged in'}), 401
+    user_id = user[0]
+    if 'photo' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file sent'}), 400
+    f = request.files['photo']
+    if not f or not f.filename:
+        return jsonify({'ok': False, 'error': 'Empty file'}), 400
+    if not allowed_file(f.filename):
+        return jsonify({'ok': False, 'error': 'Invalid file type. Use PNG, JPG, GIF or WebP'}), 400
+    import time
+    ext = f.filename.rsplit('.', 1)[1].lower()
+    filename = f"user_{user_id}.{ext}"
+    for e in ALLOWED_EXTENSIONS:
+        old_path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}.{e}")
+        if os.path.exists(old_path) and e != ext:
+            os.remove(old_path)
+    f.save(os.path.join(UPLOAD_FOLDER, filename))
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("UPDATE users SET photo=%s WHERE id=%s", (filename, user_id))
+        mysql.connection.commit()
+    except Exception as e:
+        cur.close()
+        return jsonify({'ok': False, 'error': f'DB error: {str(e)}'}), 500
+    cur.close()
+    session['user_photo'] = filename
+    url = f"/static/uploads/{filename}?v={int(time.time())}"
+    return jsonify({'ok': True, 'filename': filename, 'url': url})
 
 if __name__ == '__main__':
     app.run(debug=True)

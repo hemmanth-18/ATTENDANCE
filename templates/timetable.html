@@ -35,10 +35,8 @@
                 {% if slot %}
                     {% if slot['is_free'] %}
                         <span class="tt-free">🔓 Free Hour</span>
-                        <span class="tt-time">{{ slot['time'] }}</span>
                     {% else %}
                         <span class="tt-subject">{{ slot['name'] }}</span>
-                        <span class="tt-time">{{ slot['time'] }}</span>
                     {% endif %}
                 {% else %}
                     {% if period <= day_configs.get(day_idx, 0) %}

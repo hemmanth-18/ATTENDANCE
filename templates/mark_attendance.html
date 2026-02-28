@@ -37,7 +37,6 @@
         <div class="submitted-row">
             <div class="submitted-left">
                 <span class="period-badge">P{{ slot[1] }}</span>
-                <span class="period-time">{{ slot[2] }}</span>
                 <span class="period-subject">
                     {% if is_free %}
                         🔓 Free Hour
@@ -77,7 +76,6 @@
     {% for slot in slots %}
     {% set tt_id    = slot[0] %}
     {% set period   = slot[1] %}
-    {% set stime    = slot[2] %}
     {% set is_free  = slot[3] %}
     {% set orig_id  = slot[4] %}
     {% set orig_name= slot[5] %}
@@ -88,7 +86,6 @@
 
         <div class="step-header">
             <div class="step-period-badge">Period {{ period }}</div>
-            <div class="step-time">{{ stime }}</div>
             {% if is_free %}<div class="free-badge">🔓 Free Hour</div>{% endif %}
         </div>
 
@@ -178,8 +175,7 @@
         {% for slot in slots %}
         {% set tt_id    = slot[0] %}
         {% set period   = slot[1] %}
-        {% set stime    = slot[2] %}
-        {% set is_free  = slot[3] %}
+            {% set is_free  = slot[3] %}
         {% set orig_id  = slot[4] %}
         {% set orig_name= slot[5] %}
 
@@ -188,7 +184,6 @@
             <div class="period-left">
                 <span class="period-badge">P{{ period }}</span>
                 <div class="period-details">
-                    <span class="period-time-label">{{ stime }}</span>
                     <span class="period-name">{{ '🔓 Free Hour' if is_free else orig_name }}</span>
                 </div>
             </div>

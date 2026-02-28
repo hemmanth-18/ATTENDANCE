@@ -19,7 +19,14 @@
            {% if request.endpoint in ['mark_attendance','saturday_check','mark_saturday'] %}class="active"{% endif %}>✅ Mark</a>
         <a href="{{ url_for('past_dates') }}" {% if request.endpoint=='past_dates' %}class="active"{% endif %}>📋 Past</a>
         <a href="{{ url_for('setup_step1') }}" {% if 'setup' in request.endpoint %}class="active"{% endif %}>⚙️ Setup</a>
-        <span class="nav-user">👤 {{ session.user_name }}</span>
+        <a href="{{ url_for('profile') }}" class="nav-avatar-link {% if request.endpoint=='profile' %}active{% endif %}" title="{{ session.user_name }}">
+            {% if session.user_photo %}
+                <img src="{{ url_for('static', filename='uploads/' + session.user_photo) }}"
+                     class="nav-avatar-img" alt="{{ session.user_name }}">
+            {% else %}
+                <div class="nav-avatar-initials">{{ session.user_name[0]|upper if session.user_name else '?' }}</div>
+            {% endif %}
+        </a>
         <a href="{{ url_for('logout') }}" class="btn-logout">Logout</a>
     </div>
 </nav>
@@ -54,55 +61,37 @@
 function checkReminder() {
     const now = new Date();
     const hour = now.getHours();
-    const day = now.getDay();      // 0=Sun, 1=Mon ... 6=Sat
+    const day = now.getDay();
     const isSaturday = (day === 6);
-    const isWeekday = (day >= 1 && day <= 5); // Mon-Fri only
+    const isWeekday = (day >= 1 && day <= 5);
     const todayStr = now.toDateString();
     const dismissed = sessionStorage.getItem('dismissed_' + todayStr);
-
     if (dismissed) return;
-
-    // Only trigger at 9 PM (21:00) or later
     if (hour < 21) return;
-
-    // Saturday reminder: only on Saturday at 9 PM
-    // Weekday reminder: only on Mon-Fri at 9 PM
-    // Sunday: no reminder ever
     if (!isSaturday && !isWeekday) return;
-
     fetch('/api/today_status')
         .then(r => r.json())
         .then(data => {
             if (!data.has_classes || data.submitted) return;
-
             if (isSaturday) {
-                // Only show Saturday reminder on actual Saturday
                 document.getElementById('reminder-title').textContent = '📅 Saturday Attendance!';
-                document.getElementById('reminder-msg').textContent =
-                    'It\'s 9 PM Saturday — mark your Saturday classes period by period before midnight.';
+                document.getElementById('reminder-msg').textContent = "It's 9 PM Saturday — mark your Saturday classes before midnight.";
             } else {
-                // Weekday reminder Mon-Fri
-                document.getElementById('reminder-title').textContent = '🔔 Mark Today\'s Attendance!';
-                document.getElementById('reminder-msg').textContent =
-                    'It\'s 9 PM — mark attendance for today\'s classes before you sleep.';
+                document.getElementById('reminder-title').textContent = "🔔 Mark Today's Attendance!";
+                document.getElementById('reminder-msg').textContent = "It's 9 PM — mark attendance for today's classes before you sleep.";
             }
-
             document.getElementById('reminder-popup').style.display = 'flex';
         });
 }
-
 function dismissReminder() {
     sessionStorage.setItem('dismissed_' + new Date().toDateString(), '1');
     document.getElementById('reminder-popup').style.display = 'none';
 }
-
-// Check immediately + every 10 mins
 checkReminder();
 setInterval(checkReminder, 10 * 60 * 1000);
 
-// Saturday-aware navigation: goes to /saturday on Saturdays, /mark otherwise
 function goMark() {
-    const day = new Date().getDay(); // 0=Sun … 6=Sat
+    const day = new Date().getDay();
     window.location.href = (day === 6) ? '/saturday' : '/mark';
 }
 </script>
