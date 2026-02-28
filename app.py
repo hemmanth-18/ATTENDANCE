@@ -6,13 +6,14 @@ from flask_mysqldb import MySQL
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, timedelta, datetime
 import math
-
+#hi
 app = Flask(__name__)
 app.secret_key = 'attendsmart3_secret_2024'
-#hello all im gay
+#hi welcome gay
+d61c40e5f5ee0638235c76f6cdb6330ecc1b417c
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = 'qwe123'     # ← change this
+app.config['MYSQL_PASSWORD'] = 'qwe123'     
 app.config['MYSQL_DB'] = 'attendsmart3'
 
 mysql = MySQL(app)
