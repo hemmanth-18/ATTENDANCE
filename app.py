@@ -9,7 +9,7 @@ import math
 #hi
 app = Flask(__name__)
 app.secret_key = 'attendsmart3_secret_2024'
-
+#hi welcome
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = 'qwe123'     
