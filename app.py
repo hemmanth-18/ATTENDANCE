@@ -32,9 +32,21 @@ def get_user(user_id):
     cur.close()
     return user
 
+def validate_session():
+    """Returns user if session valid, else clears stale session and returns None."""
+    if 'user_id' not in session:
+        return None
+    user = get_user(session['user_id'])
+    if not user:
+        session.clear()
+        return None
+    return user
+
 def get_subjects(user_id):
     cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM subjects WHERE user_id=%s ORDER BY subject_name", (user_id,))
+    # Only select id, subject_name — SELECT * returns (id, user_id, subject_name)
+    # which causes subj[1] to be user_id instead of the name
+    cur.execute("SELECT id, subject_name FROM subjects WHERE user_id=%s ORDER BY subject_name", (user_id,))
     rows = cur.fetchall()
     cur.close()
     return rows
@@ -84,7 +96,7 @@ def predict(attended, total_held, future_classes):
                 "need_to_attend": 0, "best_possible_pct": 0,
                 "message": "No classes scheduled.", "total_at_end": 0, "min_needed_at_end": 0}
 
-    current_pct = round(attended / total_held * 100, 1) if total_held > 0 else 0
+    current_pct = min(100.0, round(attended / total_held * 100, 1)) if total_held > 0 else 0
     best_possible_pct = round((attended + future_classes) / total_at_end * 100, 1)
     min_needed_at_end = math.ceil(0.75 * total_at_end)
     need_to_attend = max(0, min_needed_at_end - attended)
@@ -137,6 +149,10 @@ def register():
         branch = request.form['branch']
         sem_start = request.form['semester_start']
         sem_end = request.form['semester_end']
+        # Validate required fields
+        if not sem_start or not sem_end:
+            flash('Please fill in semester start and end dates!', 'error')
+            return render_template('register.html')
         cur = mysql.connection.cursor()
         try:
             cur.execute("""
@@ -146,8 +162,9 @@ def register():
             mysql.connection.commit()
             flash('Registered! Please login.', 'success')
             return redirect(url_for('login'))
-        except:
-            flash('Email already exists!', 'error')
+        except Exception as e:
+            mysql.connection.rollback()
+            flash('Email already exists or invalid data. Please try again.', 'error')
         finally:
             cur.close()
     return render_template('register.html')
@@ -181,11 +198,12 @@ def logout():
 
 @app.route('/setup/step1', methods=['GET', 'POST'])
 def setup_step1():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
+    user_id = user[0]
 
     if request.method == 'POST':
-        user_id = session['user_id']
         cur = mysql.connection.cursor()
         cur.execute("DELETE FROM day_config WHERE user_id=%s", (user_id,))
 
@@ -210,10 +228,10 @@ def setup_step1():
 
 @app.route('/setup/step2', methods=['GET', 'POST'])
 def setup_step2():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
+    user_id = user[0]
 
     if request.method == 'POST':
         cur = mysql.connection.cursor()
@@ -237,10 +255,10 @@ def setup_step2():
 
 @app.route('/setup/step3', methods=['GET', 'POST'])
 def setup_step3():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
+    user_id = user[0]
     cur = mysql.connection.cursor()
 
     if request.method == 'POST':
@@ -299,11 +317,10 @@ def setup_step3():
 
 @app.route('/dashboard')
 def dashboard():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    user = get_user(user_id)
+    user_id = user[0]
 
     if not user[8]:
         return redirect(url_for('setup_step1'))
@@ -319,12 +336,30 @@ def dashboard():
     today_submitted = cur.fetchone()
 
     # Today's class count
-    cur.execute("""
-        SELECT COUNT(*) FROM timetable t
-        JOIN day_config dc ON dc.user_id=t.user_id AND dc.day_of_week=t.day_of_week
-        WHERE t.user_id=%s AND t.day_of_week=%s AND dc.has_classes=1
-    """, (user_id, today.weekday()))
-    today_class_count = cur.fetchone()[0]
+    is_saturday = today.weekday() == 5
+    if is_saturday:
+        # For Saturday, check saturday_slots for today's date
+        cur.execute("""
+            SELECT COUNT(*) FROM saturday_slots
+            WHERE user_id=%s AND sat_date=%s
+        """, (user_id, today))
+        today_class_count = cur.fetchone()[0]
+        # If no slots set yet, check if saturday_config says working
+        if today_class_count == 0:
+            cur.execute("""
+                SELECT is_working, total_periods FROM saturday_config
+                WHERE user_id=%s AND sat_date=%s
+            """, (user_id, today))
+            sat_cfg = cur.fetchone()
+            today_class_count = sat_cfg[1] if sat_cfg and sat_cfg[0] == 1 else -1
+            # -1 means Saturday not yet configured — needs the saturday_check flow
+    else:
+        cur.execute("""
+            SELECT COUNT(*) FROM timetable t
+            JOIN day_config dc ON dc.user_id=t.user_id AND dc.day_of_week=t.day_of_week
+            WHERE t.user_id=%s AND t.day_of_week=%s AND dc.has_classes=1
+        """, (user_id, today.weekday()))
+        today_class_count = cur.fetchone()[0]
 
     # All subjects with prediction
     subjects = get_subjects(user_id)
@@ -343,7 +378,7 @@ def dashboard():
             total_held += count_class_dates(sem_start, sem_end, dow)
             future_classes += count_future_dates(sem_end, dow)
 
-        # Also count free hours where this subject was chosen
+        # Count free hours (weekday + saturday) where this subject was chosen
         cur.execute("""
             SELECT COUNT(*) FROM attendance
             WHERE user_id=%s AND free_subject_id=%s AND is_free_hour=1
@@ -352,19 +387,43 @@ def dashboard():
         free_held = cur.fetchone()[0]
         total_held += free_held
 
-        # Attended
+        # Count Saturday regular slots for this subject (from saturday_slots, not attendance)
+        # Only count Saturdays that were actually submitted (working day confirmed)
+        cur.execute("""
+            SELECT COUNT(*) FROM saturday_slots ss
+            JOIN saturday_config sc ON ss.user_id=sc.user_id AND ss.sat_date=sc.sat_date
+            JOIN daily_submissions ds ON ss.user_id=ds.user_id AND ss.sat_date=ds.submission_date
+            WHERE ss.user_id=%s AND ss.subject_id=%s AND ss.is_free=0
+            AND sc.is_working=1
+            AND ss.sat_date BETWEEN %s AND %s
+        """, (user_id, subj_id, sem_start, today))
+        sat_held = cur.fetchone()[0]
+        total_held += sat_held
+
+        # Attended: weekday regular + saturday regular + free hours (weekday+sat)
         cur.execute("""
             SELECT COUNT(*) FROM attendance
             WHERE user_id=%s AND status='present'
-            AND (subject_id=%s OR free_subject_id=%s)
-        """, (user_id, subj_id, subj_id))
-        attended = cur.fetchone()[0]
+            AND subject_id=%s AND is_free_hour=0
+        """, (user_id, subj_id))
+        attended_regular = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*) FROM attendance
+            WHERE user_id=%s AND status='present'
+            AND free_subject_id=%s AND is_free_hour=1
+        """, (user_id, subj_id))
+        attended_free = cur.fetchone()[0]
+
+        attended = attended_regular + attended_free
+        # Cap attended at total_held to prevent > 100%
+        attended = min(attended, total_held)
 
         pred = predict(attended, total_held, future_classes)
 
         results.append({
             "id": subj_id,
-            "name": subj[2],
+            "name": subj[1],
             "attended": attended,
             "total_held": total_held,
             "prediction": pred
@@ -379,21 +438,34 @@ def dashboard():
     submitted_dates = {row[0] for row in cur.fetchall()}
     cur.execute("SELECT DISTINCT day_of_week FROM timetable WHERE user_id=%s", (user_id,))
     tt_days = {row[0] for row in cur.fetchall()}
+    # Get all Saturdays that were configured as working days
+    cur.execute("""
+        SELECT sat_date FROM saturday_config
+        WHERE user_id=%s AND is_working=1 AND sat_date < %s
+    """, (user_id, today))
+    working_saturdays = {row[0] for row in cur.fetchall()}
     pending_count = 0
     d = sem_start
     while d < today:
-        if d.weekday() in tt_days and d not in submitted_dates:
-            pending_count += 1
+        if d not in submitted_dates:
+            if d.weekday() in tt_days:  # regular weekday with class
+                pending_count += 1
+            elif d in working_saturdays:  # Saturday that was a working day
+                pending_count += 1
         d += timedelta(days=1)
 
     cur.close()
 
-    is_saturday = today.weekday() == 5
-    is_sunday   = today.weekday() == 6
-    has_pending = today_class_count > 0 and not today_submitted and sem_start <= today <= sem_end
-    # Saturday banner: only show on actual Saturday
-    # Sunday: never show reminder
-    # Weekdays Mon-Fri: show if pending
+    is_sunday = today.weekday() == 6
+    # Saturday: show reminder if not yet submitted AND (slots configured OR not configured yet)
+    # today_class_count == -1 means Saturday not configured yet → still show reminder to prompt user
+    if is_saturday:
+        has_pending = not today_submitted and sem_start <= today <= sem_end
+        show_saturday_prompt = today_class_count == -1 and not today_submitted and sem_start <= today <= sem_end
+    else:
+        has_pending = today_class_count > 0 and not today_submitted and sem_start <= today <= sem_end
+        show_saturday_prompt = False
+
     if is_sunday:
         show_reminder = False
     else:
@@ -404,6 +476,7 @@ def dashboard():
         today=today, today_class_count=today_class_count,
         today_submitted=today_submitted,
         show_reminder=show_reminder,
+        show_saturday_prompt=show_saturday_prompt,
         is_saturday=is_saturday,
         danger=danger, high=high, safe=safe,
         pending_count=pending_count
@@ -415,12 +488,13 @@ def dashboard():
 
 @app.route('/mark', methods=['GET', 'POST'])
 def mark_attendance():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    user = get_user(user_id)
+    user_id = user[0]
     subjects = get_subjects(user_id)
+    # subjects_dict {id: name} — safe lookup in templates, avoids tuple index bugs
+    subjects_dict = {s[0]: s[1] for s in subjects}
 
     mark_date_str = request.args.get('date', date.today().isoformat())
     mark_date = date.fromisoformat(mark_date_str)
@@ -444,7 +518,6 @@ def mark_attendance():
     if request.method == 'POST':
         for slot in slots:
             tt_id = slot[0]
-            period = slot[1]
             is_free = slot[3]
             original_subj_id = slot[4]
 
@@ -456,8 +529,7 @@ def mark_attendance():
                 skip = request.form.get(f'skip_free_{tt_id}', '0')
 
                 if skip == '1' or not free_subj_id:
-                    # No class happened in free hour
-                    continue
+                    continue  # no class happened in free hour
 
                 free_subj_id = int(free_subj_id)
                 cur.execute("""
@@ -466,11 +538,17 @@ def mark_attendance():
                     ON DUPLICATE KEY UPDATE status=%s, free_subject_id=%s, marked_at=NOW()
                 """, (user_id, free_subj_id, tt_id, mark_date, status, free_subj_id, status, free_subj_id))
             else:
+                # Substitution: did a different teacher take this period?
+                sub_val = request.form.get(f'sub_subject_{tt_id}', '')
+                actual_subj_id = int(sub_val) if sub_val else original_subj_id
+                # store substituted id in free_subject_id column so we can show it later
+                sub_record = actual_subj_id if actual_subj_id != original_subj_id else None
                 cur.execute("""
-                    INSERT INTO attendance (user_id, subject_id, timetable_id, class_date, status, is_free_hour)
-                    VALUES (%s,%s,%s,%s,%s,0)
-                    ON DUPLICATE KEY UPDATE status=%s, marked_at=NOW()
-                """, (user_id, original_subj_id, tt_id, mark_date, status, status))
+                    INSERT INTO attendance (user_id, subject_id, timetable_id, class_date, status, is_free_hour, free_subject_id)
+                    VALUES (%s,%s,%s,%s,%s,0,%s)
+                    ON DUPLICATE KEY UPDATE status=%s, subject_id=%s, free_subject_id=%s, marked_at=NOW()
+                """, (user_id, actual_subj_id, tt_id, mark_date, status, sub_record,
+                       status, actual_subj_id, sub_record))
 
         # Mark day submitted
         cur.execute("""
@@ -485,16 +563,19 @@ def mark_attendance():
     # Load existing records for editing
     existing = {}
     free_chosen = {}
+    sub_chosen = {}  # which subject actually taught each regular period (for substitution display)
     for slot in slots:
         tt_id = slot[0]
+        orig_id = slot[4]
         cur.execute("""
-            SELECT status, free_subject_id FROM attendance
+            SELECT status, free_subject_id, subject_id FROM attendance
             WHERE user_id=%s AND timetable_id=%s AND class_date=%s
         """, (user_id, tt_id, mark_date))
         row = cur.fetchone()
         if row:
             existing[tt_id] = row[0]
             free_chosen[tt_id] = row[1]
+            sub_chosen[tt_id] = row[2]  # actual subject that taught this period
 
     cur.close()
 
@@ -506,7 +587,9 @@ def mark_attendance():
         already_submitted=already_submitted,
         existing=existing,
         free_chosen=free_chosen,
+        sub_chosen=sub_chosen,
         subjects=subjects,
+        subjects_dict=subjects_dict,
         user=user,
         today=date.today()
     )
@@ -517,11 +600,10 @@ def mark_attendance():
 
 @app.route('/past_dates')
 def past_dates():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    user = get_user(user_id)
+    user_id = user[0]
     sem_start = user[6]
     today = date.today()
 
@@ -547,11 +629,10 @@ def past_dates():
 
 @app.route('/timetable')
 def view_timetable():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    user = get_user(user_id)
+    user_id = user[0]
 
     cur = mysql.connection.cursor()
     cur.execute("SELECT day_of_week, total_periods FROM day_config WHERE user_id=%s AND has_classes=1 ORDER BY day_of_week", (user_id,))
@@ -589,15 +670,220 @@ def view_timetable():
     )
 
 # ─────────────────────────────────────────────────────
+# SATURDAY: Working day check + custom subject entry
+# ─────────────────────────────────────────────────────
+
+@app.route('/saturday', methods=['GET', 'POST'])
+def saturday_check():
+    user = validate_session()
+    if not user:
+        return redirect(url_for('login'))
+    user_id = user[0]
+    subjects = get_subjects(user_id)
+    subjects_dict = {s[0]: s[1] for s in subjects}
+
+    mark_date_str = request.args.get('date', date.today().isoformat())
+    mark_date = date.fromisoformat(mark_date_str)
+
+    cur = mysql.connection.cursor()
+
+    # Load existing config for this Saturday if already set
+    cur.execute("SELECT is_working, total_periods FROM saturday_config WHERE user_id=%s AND sat_date=%s",
+                (user_id, mark_date))
+    existing_config = cur.fetchone()
+
+    existing_slots = []
+    if existing_config and existing_config[0] == 1:
+        cur.execute("""
+            SELECT ss.id, ss.period_number, ss.slot_label, ss.subject_id, COALESCE(s.subject_name,'Free Hour') as subject_name, ss.is_free
+            FROM saturday_slots ss LEFT JOIN subjects s ON ss.subject_id=s.id
+            WHERE ss.user_id=%s AND ss.sat_date=%s ORDER BY ss.period_number
+        """, (user_id, mark_date))
+        existing_slots = cur.fetchall()
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'holiday':
+            cur.execute("""
+                INSERT INTO saturday_config (user_id, sat_date, is_working, total_periods)
+                VALUES (%s,%s,0,0)
+                ON DUPLICATE KEY UPDATE is_working=0, total_periods=0
+            """, (user_id, mark_date))
+            # Mark as submitted so it won't show as pending
+            cur.execute("INSERT IGNORE INTO daily_submissions (user_id, submission_date) VALUES (%s,%s)",
+                        (user_id, mark_date))
+            mysql.connection.commit()
+            cur.close()
+            flash(f'{mark_date.strftime("%d %b %Y")} marked as holiday — no attendance needed. 🏖️', 'success')
+            return redirect(url_for('dashboard'))
+
+        elif action == 'working':
+            total_periods = int(request.form.get('total_periods', 0))
+            if total_periods == 0:
+                flash('Please select number of periods!', 'error')
+                cur.close()
+                return redirect(url_for('saturday_check', date=mark_date_str))
+
+            cur.execute("""
+                INSERT INTO saturday_config (user_id, sat_date, is_working, total_periods)
+                VALUES (%s,%s,1,%s)
+                ON DUPLICATE KEY UPDATE is_working=1, total_periods=%s
+            """, (user_id, mark_date, total_periods, total_periods))
+
+            # Clear old slots and insert new ones
+            cur.execute("DELETE FROM saturday_slots WHERE user_id=%s AND sat_date=%s", (user_id, mark_date))
+            for p in range(1, total_periods + 1):
+                subj_id = request.form.get(f'period_{p}_subject', '')
+                slot_label = SLOT_TIMES[p - 1] if p <= len(SLOT_TIMES) else f'Period {p}'
+                if subj_id == 'FREE':
+                    cur.execute("""
+                        INSERT INTO saturday_slots (user_id, sat_date, period_number, subject_id, slot_label, is_free)
+                        VALUES (%s,%s,%s,NULL,%s,1)
+                    """, (user_id, mark_date, p, slot_label))
+                elif subj_id:
+                    cur.execute("""
+                        INSERT INTO saturday_slots (user_id, sat_date, period_number, subject_id, slot_label, is_free)
+                        VALUES (%s,%s,%s,%s,%s,0)
+                    """, (user_id, mark_date, p, int(subj_id), slot_label))
+
+            mysql.connection.commit()
+            cur.close()
+            flash('Saturday schedule saved! Now mark attendance.', 'success')
+            return redirect(url_for('mark_saturday', date=mark_date_str))
+
+    cur.close()
+    return render_template('saturday_check.html',
+        mark_date=mark_date,
+        subjects=subjects,
+        subjects_dict=subjects_dict,
+        existing_config=existing_config,
+        existing_slots=existing_slots,
+        slot_times=SLOT_TIMES,
+        user=user,
+        today=date.today()
+    )
+
+
+@app.route('/mark_saturday', methods=['GET', 'POST'])
+def mark_saturday():
+    user = validate_session()
+    if not user:
+        return redirect(url_for('login'))
+    user_id = user[0]
+    subjects = get_subjects(user_id)
+    subjects_dict = {s[0]: s[1] for s in subjects}
+
+    mark_date_str = request.args.get('date', date.today().isoformat())
+    mark_date = date.fromisoformat(mark_date_str)
+
+    cur = mysql.connection.cursor()
+
+    cur.execute("""
+        SELECT ss.id, ss.period_number, ss.slot_label, ss.subject_id, COALESCE(s.subject_name,'Free Hour') as subject_name, ss.is_free
+        FROM saturday_slots ss LEFT JOIN subjects s ON ss.subject_id=s.id
+        WHERE ss.user_id=%s AND ss.sat_date=%s ORDER BY ss.period_number
+    """, (user_id, mark_date))
+    sat_slots = cur.fetchall()
+
+    if not sat_slots:
+        cur.close()
+        return redirect(url_for('saturday_check', date=mark_date_str))
+
+    cur.execute("SELECT id FROM daily_submissions WHERE user_id=%s AND submission_date=%s", (user_id, mark_date))
+    already_submitted = cur.fetchone()
+
+    # Allow editing even if already submitted (edit=1 in query params shows form)
+    force_edit = request.args.get('edit') == '1'
+    if force_edit and already_submitted:
+        already_submitted = None  # treat as not submitted to show form
+
+    if request.method == 'POST':
+        for slot in sat_slots:
+            slot_id, period, slot_label, orig_subj_id, orig_subj_name, is_free = slot
+            fake_tt_id = -slot_id
+
+            if is_free:
+                # Free hour: only save if user chose a subject (not skipped)
+                skip = request.form.get(f'skip_free_{slot_id}', '1')
+                free_subj_id = request.form.get(f'free_subject_{slot_id}', None)
+                if skip == '1' or not free_subj_id:
+                    # Delete any existing record for this slot (in case editing)
+                    cur.execute("DELETE FROM attendance WHERE user_id=%s AND timetable_id=%s AND class_date=%s",
+                                (user_id, fake_tt_id, mark_date))
+                    continue  # No class in free hour — don't record
+                free_subj_id = int(free_subj_id)
+                status = request.form.get(f'status_{slot_id}', 'absent')
+                cur.execute("""
+                    INSERT INTO attendance (user_id, subject_id, timetable_id, class_date, status, is_free_hour, free_subject_id)
+                    VALUES (%s,%s,%s,%s,%s,1,%s)
+                    ON DUPLICATE KEY UPDATE status=%s, free_subject_id=%s, marked_at=NOW()
+                """, (user_id, free_subj_id, fake_tt_id, mark_date, status, free_subj_id,
+                       status, free_subj_id))
+            else:
+                # Regular period — always save (present or absent)
+                status = request.form.get(f'status_{slot_id}', 'absent')
+                sub_val = request.form.get(f'sub_subject_{slot_id}', '')
+                actual_subj_id = int(sub_val) if sub_val else orig_subj_id
+                if not actual_subj_id:
+                    continue
+                sub_record = actual_subj_id if actual_subj_id != orig_subj_id else None
+                cur.execute("""
+                    INSERT INTO attendance (user_id, subject_id, timetable_id, class_date, status, is_free_hour, free_subject_id)
+                    VALUES (%s,%s,%s,%s,%s,0,%s)
+                    ON DUPLICATE KEY UPDATE status=%s, subject_id=%s, free_subject_id=%s, marked_at=NOW()
+                """, (user_id, actual_subj_id, fake_tt_id, mark_date, status, sub_record,
+                       status, actual_subj_id, sub_record))
+
+        cur.execute("INSERT IGNORE INTO daily_submissions (user_id, submission_date) VALUES (%s,%s)",
+                    (user_id, mark_date))
+        mysql.connection.commit()
+        cur.close()
+        flash(f'Saturday attendance saved for {mark_date.strftime("%d %b %Y")}! ✅', 'success')
+        return redirect(url_for('dashboard'))
+
+    # Load existing attendance for display
+    existing = {}
+    sub_chosen = {}
+    free_chosen = {}
+    for slot in sat_slots:
+        slot_id, period, slot_label, orig_subj_id, orig_subj_name, is_free = slot
+        fake_tt_id = -slot_id
+        cur.execute("""
+            SELECT status, subject_id, free_subject_id FROM attendance
+            WHERE user_id=%s AND timetable_id=%s AND class_date=%s
+        """, (user_id, fake_tt_id, mark_date))
+        row = cur.fetchone()
+        if row:
+            existing[slot_id] = row[0]
+            sub_chosen[slot_id] = row[1]
+            free_chosen[slot_id] = row[2]
+
+    cur.close()
+    return render_template('mark_saturday.html',
+        sat_slots=sat_slots,
+        mark_date=mark_date,
+        already_submitted=already_submitted,
+        existing=existing,
+        sub_chosen=sub_chosen,
+        free_chosen=free_chosen,
+        subjects_dict=subjects_dict,
+        subjects=subjects,
+        user=user,
+        today=date.today()
+    )
+
+
+# ─────────────────────────────────────────────────────
 # API
 # ─────────────────────────────────────────────────────
 
 @app.route('/api/today_status')
 def today_status():
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return jsonify({"has_classes": False, "submitted": False, "is_saturday": False})
-
-    user_id = session['user_id']
+    user_id = user[0]
     today = date.today()
     cur = mysql.connection.cursor()
 
@@ -617,13 +903,17 @@ def today_status():
 
 @app.route('/api/chart/<int:subject_id>')
 def chart_data(subject_id):
-    if 'user_id' not in session:
+    user = validate_session()
+    if not user:
         return jsonify({})
-    user_id = session['user_id']
+    user_id = user[0]
     cur = mysql.connection.cursor()
     cur.execute("""
-        SELECT class_date, status FROM attendance
-        WHERE user_id=%s AND (subject_id=%s OR free_subject_id=%s)
+        SELECT class_date, status, is_free_hour, free_subject_id, subject_id FROM attendance
+        WHERE user_id=%s AND (
+            (subject_id=%s AND is_free_hour=0) OR
+            (free_subject_id=%s AND is_free_hour=1)
+        )
         ORDER BY class_date ASC LIMIT 30
     """, (user_id, subject_id, subject_id))
     rows = cur.fetchall()
@@ -636,7 +926,7 @@ def chart_data(subject_id):
         if r[1] == 'present':
             attended += 1
         labels.append(str(r[0]))
-        pcts.append(round(attended / total * 100, 1))
+        pcts.append(min(100.0, round(attended / total * 100, 1)))
 
     return jsonify({"labels": labels, "pcts": pcts})
 

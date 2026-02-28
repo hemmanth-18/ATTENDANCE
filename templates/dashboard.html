@@ -5,12 +5,24 @@
 <div class="page-header">
     <div>
         <h2>Hello, {{ user[1] }} 👋</h2>
-        <p>Sem {{ user[4] }} • {{ user[5] }} • {{ user[6].strftime('%d %b') }} → {{ user[7].strftime('%d %b %Y') }}</p>
+        <p>Sem {{ user[4] }} • {{ user[5] }}{% if user[6] and user[7] %} • {{ user[6].strftime('%d %b') }} → {{ user[7].strftime('%d %b %Y') }}{% endif %}</p>
     </div>
+    {% if is_saturday %}
+    <a href="{{ url_for('saturday_check', date=today.isoformat()) }}" class="btn-primary">✅ Mark Today</a>
+    {% else %}
     <a href="{{ url_for('mark_attendance') }}" class="btn-primary">✅ Mark Today</a>
+    {% endif %}
 </div>
 
-{% if show_reminder %}
+{% if show_saturday_prompt %}
+<div class="reminder-banner saturday-prompt-banner">
+    <div>
+        📅 <strong>It's Saturday — is there class today?</strong>
+        <span>Set up your Saturday schedule first.</span>
+    </div>
+    <a href="{{ url_for('saturday_check', date=today.isoformat()) }}" class="btn-mark-now">Setup & Mark →</a>
+</div>
+{% elif show_reminder %}
 <div class="reminder-banner">
     <div>
         {% if is_saturday %}
@@ -21,7 +33,11 @@
         <span>Mark before midnight to keep records accurate.</span>
         {% endif %}
     </div>
+    {% if is_saturday %}
+    <a href="{{ url_for('saturday_check', date=today.isoformat()) }}" class="btn-mark-now">Mark Now →</a>
+    {% else %}
     <a href="{{ url_for('mark_attendance') }}" class="btn-mark-now">Mark Now →</a>
+    {% endif %}
 </div>
 {% elif today_submitted %}
 <div class="success-banner">✅ Today's attendance submitted. Great job!</div>
