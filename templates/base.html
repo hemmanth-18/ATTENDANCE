@@ -18,6 +18,7 @@
         <a href="javascript:void(0)" onclick="goMark()"
            {% if request.endpoint in ['mark_attendance','saturday_check','mark_saturday'] %}class="active"{% endif %}>✅ Mark</a>
         <a href="{{ url_for('past_dates') }}" {% if request.endpoint=='past_dates' %}class="active"{% endif %}>📋 Past</a>
+        <a href="{{ url_for('attendance_history') }}" {% if request.endpoint=='attendance_history' %}class="active"{% endif %}>📖 History</a>
         <a href="{{ url_for('setup_step1') }}" {% if 'setup' in request.endpoint %}class="active"{% endif %}>⚙️ Setup</a>
         <a href="{{ url_for('profile') }}" class="nav-avatar-link {% if request.endpoint=='profile' %}active{% endif %}" title="{{ session.user_name }}">
             {% if session.user_photo %}

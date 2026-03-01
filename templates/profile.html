@@ -134,12 +134,16 @@
                     <input type="hidden" name="action" value="add_semester">
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Semester Number</label>
-                            <input type="number" name="semester_number" min="1" max="12" value="1" required>
+                            <label>Semester</label>
+                            <select name="semester_number" id="add-sem-num" onchange="updateSemLabel(this.value)">
+                                {% for i in range(1, total_sems+1) %}
+                                <option value="{{ i }}">Semester {{ i }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
                         <div class="form-group">
                             <label>Label (e.g. Sem 3 - 2025)</label>
-                            <input type="text" name="semester_label" placeholder="Sem 3 - 2025" required>
+                            <input type="text" name="semester_label" id="add-sem-label" placeholder="Sem 1 - 2025" required>
                         </div>
                     </div>
                     <div class="form-group">
@@ -157,8 +161,11 @@
                         </div>
                     </div>
                     <div class="form-group" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px;">
-                        <input type="checkbox" name="make_active" value="1" id="make-active-chk" style="width:auto;">
+                        <input type="checkbox" name="make_active" value="1" id="make-active-chk" style="width:auto;" onchange="toggleNewSemWarning(this)">
                         <label for="make-active-chk" style="font-weight:500;color:#555;">Make this the active semester</label>
+                    </div>
+                    <div id="new-sem-warning" style="display:none;background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:.83rem;color:#795548;">
+                        ⚠️ <strong>Heads up!</strong> Making this active will clear the current timetable and redirect you to <strong>set up a new timetable</strong> for this semester. Your existing attendance records are safely preserved.
                     </div>
                     <div style="display:flex;gap:8px;margin-top:10px;">
                         <button type="submit" class="btn-primary">Add Semester</button>
@@ -244,6 +251,11 @@ function showPhotoStatus(msg, type) {
     if (type === 'success') setTimeout(() => { el.textContent = ''; }, 3000);
 }
 
+/* ── New semester active warning ── */
+function toggleNewSemWarning(chk) {
+    document.getElementById('new-sem-warning').style.display = chk.checked ? 'block' : 'none';
+}
+
 /* ── Semester edit toggle ── */
 function toggleEditSem(id) {
     const el = document.getElementById('sem-edit-' + id);
@@ -253,6 +265,18 @@ function toggleAddSem() {
     const el = document.getElementById('add-sem-form');
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
+function updateSemLabel(val) {
+    const lbl = document.getElementById('add-sem-label');
+    if (lbl && !lbl.dataset.edited) {
+        const yr = new Date().getFullYear();
+        lbl.value = 'Sem ' + val + ' - ' + yr;
+    }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const lbl = document.getElementById('add-sem-label');
+    if (lbl) lbl.addEventListener('input', () => { lbl.dataset.edited = '1'; });
+    updateSemLabel(1);
+});
 
 /* ── Semester stats modal ── */
 function loadSemStats(semId, semLabel) {
