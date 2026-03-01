@@ -5,10 +5,16 @@
 <div class="page-header">
     <div>
         <h2>📅 Saturday — {{ mark_date.strftime('%d %B %Y') }}</h2>
-        <p>Tell us whether this Saturday has classes before marking attendance</p>
+        <p>{% if is_edit_mode %}Editing past Saturday attendance{% else %}Tell us whether this Saturday has classes before marking attendance{% endif %}</p>
     </div>
     <a href="{{ url_for('dashboard') }}" class="btn-secondary">← Dashboard</a>
 </div>
+
+{% if is_edit_mode %}
+<div class="edit-mode-banner">
+    ✏️ <strong>Edit Mode</strong> — You're editing a past Saturday. Change the schedule below or update attendance directly.
+</div>
+{% endif %}
 
 {% if existing_config %}
 {# Already configured — show summary + option to change #}
@@ -40,7 +46,7 @@
         </div>
     </div>
     <div style="margin-top:14px;display:flex;gap:10px;">
-        <a href="{{ url_for('mark_saturday', date=mark_date.isoformat()) }}" class="btn-primary">✅ Mark Attendance →</a>
+        <a href="{{ url_for('mark_saturday', date=mark_date.isoformat()) }}{% if is_edit_mode %}&edit=1{% endif %}" class="btn-primary">✅ {% if is_edit_mode %}Edit Attendance →{% else %}Mark Attendance →{% endif %}</a>
         <button type="button" class="btn-secondary" onclick="showChangeForm()">✏️ Change Schedule</button>
     </div>
     {% endif %}
@@ -147,4 +153,16 @@ function buildPeriodForm(n) {
     document.getElementById('period-subject-rows').innerHTML = html;
 }
 </script>
+
+<style>
+.edit-mode-banner {
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: .88rem;
+    color: #795548;
+}
+</style>
 {% endblock %}

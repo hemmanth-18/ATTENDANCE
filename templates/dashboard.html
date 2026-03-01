@@ -52,6 +52,11 @@
 </div>
 {% endif %}
 
+<div class="info-banner" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span>📖 Want to fix a mistake? Edit any previously submitted attendance.</span>
+    <a href="{{ url_for('attendance_history') }}" class="btn-secondary" style="font-size:.82rem;padding:6px 14px;white-space:nowrap;">Edit History →</a>
+</div>
+
 <!-- Summary -->
 <div class="summary-cards">
     <div class="summary-card card-danger"><span class="summary-number">{{ danger }}</span><span class="summary-label">🚨 Danger</span></div>

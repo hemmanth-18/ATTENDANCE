@@ -57,7 +57,7 @@
         </div>
         {% endfor %}
     </div>
-    <a href="{{ url_for('mark_attendance', date=mark_date.isoformat()) }}?edit=1" class="btn-secondary">Edit</a>
+    <a href="{{ url_for('mark_attendance', date=mark_date.isoformat(), edit=1) }}" class="btn-secondary">✏️ Edit</a>
     <a href="{{ url_for('dashboard') }}" class="btn-primary">Dashboard</a>
 </div>
 

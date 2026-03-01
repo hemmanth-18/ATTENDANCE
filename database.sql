@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     semester_start DATE NOT NULL,
     semester_end DATE NOT NULL,
     setup_done TINYINT DEFAULT 0,
+    total_semesters INT DEFAULT 8,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 select * from users;
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS subjects (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     subject_name VARCHAR(100) NOT NULL,
+    semester_id INT DEFAULT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -33,6 +35,7 @@ CREATE TABLE IF NOT EXISTS timetable (
     period_number INT NOT NULL,      -- 1,2,3...
     slot_label VARCHAR(20) DEFAULT '',
     is_free TINYINT DEFAULT 0,       -- 1 = free hour
+    semester_id INT DEFAULT NULL,    -- links to semesters.id
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
 );
@@ -71,7 +74,8 @@ CREATE TABLE IF NOT EXISTS day_config (
     day_of_week INT NOT NULL,         -- 0=Mon ... 5=Sat
     total_periods INT NOT NULL DEFAULT 5,
     has_classes TINYINT DEFAULT 1,
-    UNIQUE KEY unique_day (user_id, day_of_week),
+    semester_id INT DEFAULT NULL,     -- links to semesters.id
+    UNIQUE KEY unique_day_sem (user_id, day_of_week, semester_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -133,3 +137,35 @@ CREATE TABLE IF NOT EXISTS semesters (
 -- INSERT INTO semesters (user_id, semester_number, semester_label, branch, sem_start, sem_end, is_active)
 -- SELECT id, semester, CONCAT('Sem ', semester, ' (migrated)'), branch, semester_start, semester_end, 1
 -- FROM users WHERE setup_done=1;
+
+-- ─────────────────────────────────────────────────────
+-- SEMESTER SNAPSHOTS: stores subjects+timetable per semester
+-- so switching back to a previous semester restores its data
+-- ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS semester_snapshots (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    semester_id INT NOT NULL,
+    record_type ENUM('subject','day_config','timetable') NOT NULL,
+    meta1 VARCHAR(255) DEFAULT NULL,  -- subject_name / day_of_week / subject_name
+    meta2 VARCHAR(50)  DEFAULT NULL,  -- total_periods / day_of_week
+    meta3 VARCHAR(50)  DEFAULT NULL,  -- period_number
+    meta4 VARCHAR(50)  DEFAULT NULL,  -- slot_label
+    meta5 VARCHAR(10)  DEFAULT NULL,  -- is_free
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ─────────────────────────────────────────────────────
+-- V6 MIGRATION: Run these if upgrading from V5 or earlier
+-- Adds semester_id to subjects, timetable, day_config for full per-semester isolation
+-- This fixes the bug where switching semesters lost all attendance data
+-- ─────────────────────────────────────────────────────
+-- ALTER TABLE subjects ADD COLUMN IF NOT EXISTS semester_id INT DEFAULT NULL;
+-- ALTER TABLE timetable ADD COLUMN IF NOT EXISTS semester_id INT DEFAULT NULL;
+-- ALTER TABLE day_config ADD COLUMN IF NOT EXISTS semester_id INT DEFAULT NULL;
+-- ALTER TABLE day_config DROP INDEX IF EXISTS unique_day;
+-- ALTER TABLE day_config ADD UNIQUE KEY IF NOT EXISTS unique_day_sem (user_id, day_of_week, semester_id);
+-- Backfill existing data to the active semester:
+-- UPDATE subjects s JOIN semesters sem ON sem.user_id = s.user_id AND sem.is_active = 1 SET s.semester_id = sem.id WHERE s.semester_id IS NULL;
+-- UPDATE timetable t JOIN semesters sem ON sem.user_id = t.user_id AND sem.is_active = 1 SET t.semester_id = sem.id WHERE t.semester_id IS NULL;
+-- UPDATE day_config dc JOIN semesters sem ON sem.user_id = dc.user_id AND sem.is_active = 1 SET dc.semester_id = sem.id WHERE dc.semester_id IS NULL;
