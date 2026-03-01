@@ -25,7 +25,7 @@ app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = 'qwe123'     # ← change this
 app.config['MYSQL_DB'] = 'attendsmart3'
 
-mysql = MySQL(app) #sql
+mysql = MySQL(app)
 
 DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 SLOT_TIMES = ['8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM',
@@ -88,11 +88,12 @@ def count_class_dates(start_date, end_date, day_of_week):
         current += timedelta(days=1)
     return count
 
-def count_future_dates(end_date, day_of_week):
-    """Count future occurrences of a weekday from tomorrow to end."""
-    tomorrow = date.today() + timedelta(days=1)
+def count_future_dates(end_date, day_of_week, from_date=None):
+    """Count future occurrences of a weekday from from_date to sem_end (inclusive)."""
+    if from_date is None:
+        from_date = date.today() + timedelta(days=1)
     count = 0
-    current = tomorrow
+    current = from_date
     while current <= end_date:
         if current.weekday() == day_of_week:
             count += 1
@@ -112,7 +113,18 @@ def predict(attended, total_held, future_classes):
     need_to_attend = max(0, min_needed_at_end - attended)
     can_miss = future_classes - need_to_attend
 
-    if best_possible_pct < 75:
+    # Semester finished (no future classes) — show final result
+    if future_classes == 0:
+        if current_pct >= 75:
+            risk = "SAFE"
+            message = f"✅ Semester complete. Final attendance: {current_pct}% — above 75%!"
+        elif current_pct >= 60:
+            risk = "MEDIUM"
+            message = f"🔶 Semester complete. Final attendance: {current_pct}% — below 75%."
+        else:
+            risk = "DANGER"
+            message = f"🚨 Semester complete. Final attendance: {current_pct}% — critically low."
+    elif best_possible_pct < 75:
         risk = "DANGER"
         message = f"🚨 Cannot reach 75% even attending all remaining. Best possible: {best_possible_pct}%."
     elif can_miss <= 0:
@@ -395,9 +407,13 @@ def dashboard():
 
         total_held = 0
         future_classes = 0
+        # future starts from tomorrow (today already counted in total_held if it passed)
+        future_start = today + timedelta(days=1)
         for (dow,) in slot_days:
             total_held += count_class_dates(sem_start, sem_end, dow)
-            future_classes += count_future_dates(sem_end, dow)
+            # Only count future if semester hasn't ended
+            if future_start <= sem_end:
+                future_classes += count_future_dates(sem_end, dow, from_date=future_start)
 
         # Count free hours (weekday + saturday) where this subject was chosen
         cur.execute("""
@@ -1123,38 +1139,6 @@ def profile():
         today=date.today()
     )
 
-@app.route('/api/semester_stats/<int:sem_id>')
-def semester_stats(sem_id):
-    """Return attendance summary for a given semester (for the history view)."""
-    user = validate_session()
-    if not user:
-        return jsonify({})
-    user_id = user[0]
-    cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM semesters WHERE id=%s AND user_id=%s", (sem_id, user_id))
-    sem = cur.fetchone()
-    if not sem:
-        cur.close()
-        return jsonify({})
-
-    sem_start, sem_end = sem[5], sem[6]
-    # Get all attendance for this date range
-    cur.execute("""
-        SELECT s.subject_name,
-               SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as attended,
-               COUNT(*) as total
-        FROM attendance a
-        JOIN subjects s ON a.subject_id = s.id
-        WHERE a.user_id=%s AND a.class_date BETWEEN %s AND %s
-        GROUP BY s.subject_name
-        ORDER BY s.subject_name
-    """, (user_id, sem_start, sem_end))
-    rows = cur.fetchall()
-    cur.close()
-    data = [{"subject": r[0], "attended": int(r[1]), "total": int(r[2]),
-             "pct": round(r[1]/r[2]*100, 1) if r[2] > 0 else 0} for r in rows]
-    return jsonify({"semester": sem[3], "start": str(sem_start), "end": str(sem_end), "subjects": data})
-
 @app.route('/api/upload_photo', methods=['POST'])
 def upload_photo():
     user = validate_session()
@@ -1187,6 +1171,39 @@ def upload_photo():
     session['user_photo'] = filename
     url = f"/static/uploads/{filename}?v={int(time.time())}"
     return jsonify({'ok': True, 'filename': filename, 'url': url})
+
+@app.route('/api/semester_stats/<int:sem_id>')
+def semester_stats(sem_id):
+    """Return attendance summary for a given semester (for the history view)."""
+    user = validate_session()
+    if not user:
+        return jsonify({})
+    user_id = user[0]
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM semesters WHERE id=%s AND user_id=%s", (sem_id, user_id))
+    sem = cur.fetchone()
+    if not sem:
+        cur.close()
+        return jsonify({})
+
+    sem_start, sem_end = sem[5], sem[6]
+    # Get all attendance for this date range
+    cur.execute("""
+        SELECT s.subject_name,
+               SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END) as attended,
+               COUNT(*) as total
+        FROM attendance a
+        JOIN subjects s ON a.subject_id = s.id
+        WHERE a.user_id=%s AND a.class_date BETWEEN %s AND %s
+        GROUP BY s.subject_name
+        ORDER BY s.subject_name
+    """, (user_id, sem_start, sem_end))
+    rows = cur.fetchall()
+    cur.close()
+    data = [{"subject": r[0], "attended": int(r[1]), "total": int(r[2]),
+             "pct": round(r[1]/r[2]*100, 1) if r[2] > 0 else 0} for r in rows]
+    return jsonify({"semester": sem[3], "start": str(sem_start), "end": str(sem_end), "subjects": data})
+
 
 if __name__ == '__main__':
     app.run(debug=True)

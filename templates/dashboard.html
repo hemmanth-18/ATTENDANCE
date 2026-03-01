@@ -80,9 +80,13 @@
         </span>
     </div>
     <div class="subject-stats">
-        <div class="stat"><span class="stat-value">{{ item.prediction.current_pct }}%</span><span class="stat-label">Current</span></div>
+        <div class="stat"><span class="stat-value">{{ item.prediction.current_pct }}%</span><span class="stat-label">{% if item.prediction.total_at_end == item.total_held %}Final{% else %}Current{% endif %}</span></div>
         <div class="stat"><span class="stat-value">{{ item.attended }}/{{ item.total_held }}</span><span class="stat-label">Attended</span></div>
+        {% if item.prediction.total_at_end > item.total_held %}
         <div class="stat"><span class="stat-value {{ 'text-danger' if item.prediction.can_miss <= 2 else '' }}">{{ item.prediction.can_miss }}</span><span class="stat-label">Can Miss</span></div>
+        {% else %}
+        <div class="stat"><span class="stat-value" style="font-size:.9rem;">✔ Done</span><span class="stat-label">Semester</span></div>
+        {% endif %}
     </div>
     <div class="progress-container">
         <div class="progress-bar">
@@ -94,8 +98,10 @@
     <div class="prediction-msg msg-{{ item.prediction.risk | lower }}">{{ item.prediction.message }}</div>
     <div class="info-pills">
         <span class="pill">📅 Total: {{ item.prediction.total_at_end }}</span>
+        {% if item.prediction.total_at_end > item.total_held %}
         <span class="pill">🎯 Need: {{ item.prediction.min_needed_at_end }}</span>
         <span class="pill">🔝 Best: {{ item.prediction.best_possible_pct }}%</span>
+        {% endif %}
     </div>
     <canvas id="chart-{{ item.id }}" height="65"></canvas>
 </div>
