@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS attendsmart3;
 USE attendsmart3;
-
+drop database attendsmart3;
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     setup_done TINYINT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
+select * from users;
+ALTER TABLE users ADD COLUMN photo VARCHAR(255) DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS subjects (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -111,7 +112,7 @@ CREATE TABLE IF NOT EXISTS saturday_slots (
 
 -- Add profile photo to users
 -- ALTER TABLE users ADD COLUMN IF NOT EXISTS photo VARCHAR(255) DEFAULT NULL;
-
+	
 -- Semesters table: each user can have multiple semesters
 -- The "active" semester is used for current dashboard calculations
 CREATE TABLE IF NOT EXISTS semesters (
