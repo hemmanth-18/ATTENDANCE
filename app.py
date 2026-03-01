@@ -32,8 +32,10 @@ db_pool = psycopg2.pool.SimpleConnectionPool(
     sslmode='require'
 )
 
+ 
 def get_db():
     return db_pool.getconn()
+ 
 
 def release_db(conn):
     db_pool.putconn(conn)
@@ -1403,3 +1405,4 @@ def edit_timetable():
 
 if __name__ == '__main__':
     app.run(debug=True)
+ 
