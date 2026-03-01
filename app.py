@@ -25,7 +25,7 @@ app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = 'qwe123'     # ← change this
 app.config['MYSQL_DB'] = 'attendsmart3'
 
-mysql = MySQL(app)
+mysql = MySQL(app) #sql
 
 DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 SLOT_TIMES = ['8:00 AM', '9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM',
@@ -88,12 +88,11 @@ def count_class_dates(start_date, end_date, day_of_week):
         current += timedelta(days=1)
     return count
 
-def count_future_dates(end_date, day_of_week, from_date=None):
-    """Count future occurrences of a weekday from from_date to sem_end (inclusive)."""
-    if from_date is None:
-        from_date = date.today() + timedelta(days=1)
+def count_future_dates(end_date, day_of_week):
+    """Count future occurrences of a weekday from tomorrow to end."""
+    tomorrow = date.today() + timedelta(days=1)
     count = 0
-    current = from_date
+    current = tomorrow
     while current <= end_date:
         if current.weekday() == day_of_week:
             count += 1
@@ -113,18 +112,7 @@ def predict(attended, total_held, future_classes):
     need_to_attend = max(0, min_needed_at_end - attended)
     can_miss = future_classes - need_to_attend
 
-    # Semester finished (no future classes) — show final result
-    if future_classes == 0:
-        if current_pct >= 75:
-            risk = "SAFE"
-            message = f"✅ Semester complete. Final attendance: {current_pct}% — above 75%!"
-        elif current_pct >= 60:
-            risk = "MEDIUM"
-            message = f"🔶 Semester complete. Final attendance: {current_pct}% — below 75%."
-        else:
-            risk = "DANGER"
-            message = f"🚨 Semester complete. Final attendance: {current_pct}% — critically low."
-    elif best_possible_pct < 75:
+    if best_possible_pct < 75:
         risk = "DANGER"
         message = f"🚨 Cannot reach 75% even attending all remaining. Best possible: {best_possible_pct}%."
     elif can_miss <= 0:
@@ -407,13 +395,9 @@ def dashboard():
 
         total_held = 0
         future_classes = 0
-        # future starts from tomorrow (today already counted in total_held if it passed)
-        future_start = today + timedelta(days=1)
         for (dow,) in slot_days:
             total_held += count_class_dates(sem_start, sem_end, dow)
-            # Only count future if semester hasn't ended
-            if future_start <= sem_end:
-                future_classes += count_future_dates(sem_end, dow, from_date=future_start)
+            future_classes += count_future_dates(sem_end, dow)
 
         # Count free hours (weekday + saturday) where this subject was chosen
         cur.execute("""
@@ -1139,39 +1123,6 @@ def profile():
         today=date.today()
     )
 
-@app.route('/api/upload_photo', methods=['POST'])
-def upload_photo():
-    user = validate_session()
-    if not user:
-        return jsonify({'ok': False, 'error': 'Not logged in'}), 401
-    user_id = user[0]
-    if 'photo' not in request.files:
-        return jsonify({'ok': False, 'error': 'No file sent'}), 400
-    f = request.files['photo']
-    if not f or not f.filename:
-        return jsonify({'ok': False, 'error': 'Empty file'}), 400
-    if not allowed_file(f.filename):
-        return jsonify({'ok': False, 'error': 'Invalid file type. Use PNG, JPG, GIF or WebP'}), 400
-    import time
-    ext = f.filename.rsplit('.', 1)[1].lower()
-    filename = f"user_{user_id}.{ext}"
-    for e in ALLOWED_EXTENSIONS:
-        old_path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}.{e}")
-        if os.path.exists(old_path) and e != ext:
-            os.remove(old_path)
-    f.save(os.path.join(UPLOAD_FOLDER, filename))
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("UPDATE users SET photo=%s WHERE id=%s", (filename, user_id))
-        mysql.connection.commit()
-    except Exception as e:
-        cur.close()
-        return jsonify({'ok': False, 'error': f'DB error: {str(e)}'}), 500
-    cur.close()
-    session['user_photo'] = filename
-    url = f"/static/uploads/{filename}?v={int(time.time())}"
-    return jsonify({'ok': True, 'filename': filename, 'url': url})
-
 @app.route('/api/semester_stats/<int:sem_id>')
 def semester_stats(sem_id):
     """Return attendance summary for a given semester (for the history view)."""
@@ -1204,6 +1155,38 @@ def semester_stats(sem_id):
              "pct": round(r[1]/r[2]*100, 1) if r[2] > 0 else 0} for r in rows]
     return jsonify({"semester": sem[3], "start": str(sem_start), "end": str(sem_end), "subjects": data})
 
+@app.route('/api/upload_photo', methods=['POST'])
+def upload_photo():
+    user = validate_session()
+    if not user:
+        return jsonify({'ok': False, 'error': 'Not logged in'}), 401
+    user_id = user[0]
+    if 'photo' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file sent'}), 400
+    f = request.files['photo']
+    if not f or not f.filename:
+        return jsonify({'ok': False, 'error': 'Empty file'}), 400
+    if not allowed_file(f.filename):
+        return jsonify({'ok': False, 'error': 'Invalid file type. Use PNG, JPG, GIF or WebP'}), 400
+    import time
+    ext = f.filename.rsplit('.', 1)[1].lower()
+    filename = f"user_{user_id}.{ext}"
+    for e in ALLOWED_EXTENSIONS:
+        old_path = os.path.join(UPLOAD_FOLDER, f"user_{user_id}.{e}")
+        if os.path.exists(old_path) and e != ext:
+            os.remove(old_path)
+    f.save(os.path.join(UPLOAD_FOLDER, filename))
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("UPDATE users SET photo=%s WHERE id=%s", (filename, user_id))
+        mysql.connection.commit()
+    except Exception as e:
+        cur.close()
+        return jsonify({'ok': False, 'error': f'DB error: {str(e)}'}), 500
+    cur.close()
+    session['user_photo'] = filename
+    url = f"/static/uploads/{filename}?v={int(time.time())}"
+    return jsonify({'ok': True, 'filename': filename, 'url': url})
 
 if __name__ == '__main__':
     app.run(debug=True)
