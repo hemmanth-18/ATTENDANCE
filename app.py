@@ -32,10 +32,8 @@ db_pool = psycopg2.pool.SimpleConnectionPool(
     sslmode='require'
 )
 
- 
 def get_db():
     return db_pool.getconn()
- 
 
 def release_db(conn):
     db_pool.putconn(conn)
@@ -134,11 +132,10 @@ def get_day_timetable(user_id, day_of_week):
     return rows
 
 def count_class_dates(start_date, end_date, day_of_week):
-    today = date.today()
-    cap = min(end_date, today)
+    """Count occurrences of a weekday from start_date to end_date (full range, no today cap)."""
     count = 0
     current = start_date
-    while current <= cap:
+    while current <= end_date:
         if current.weekday() == day_of_week:
             count += 1
         current += timedelta(days=1)
@@ -464,17 +461,12 @@ def dashboard():
         subjects = get_subjects(user_id)
         results = []
 
+        sem_id_val = get_active_semester_id(user_id)
+
         for subj in subjects:
             subj_id = subj[0]
 
-            cur.execute("""
-                SELECT COUNT(*) FROM attendance
-                WHERE user_id=%s
-                AND ((subject_id=%s AND is_free_hour=0) OR (free_subject_id=%s AND is_free_hour=1))
-                AND class_date BETWEEN %s AND %s
-            """, (user_id, subj_id, subj_id, sem_start, today))
-            total_held = cur.fetchone()[0]
-
+            # ── ATTENDED: classes marked present ──
             cur.execute("""
                 SELECT COUNT(*) FROM attendance
                 WHERE user_id=%s AND status='present'
@@ -483,34 +475,48 @@ def dashboard():
             """, (user_id, subj_id, subj_id, sem_start, today))
             attended = cur.fetchone()[0]
 
-            future_classes = 0
-            if today < sem_end:
-                sem_id_val = get_active_semester_id(user_id)
-                if sem_id_val:
-                    cur.execute("""
-                        SELECT day_of_week, COUNT(*) as slots FROM timetable
-                        WHERE user_id=%s AND subject_id=%s AND semester_id=%s AND is_free=0
-                        GROUP BY day_of_week
-                    """, (user_id, subj_id, sem_id_val))
-                else:
-                    cur.execute("""
-                        SELECT day_of_week, COUNT(*) as slots FROM timetable
-                        WHERE user_id=%s AND subject_id=%s AND is_free=0
-                        GROUP BY day_of_week
-                    """, (user_id, subj_id))
-                for row in cur.fetchall():
-                    dow, slots_per_day = row[0], row[1]
-                    future_classes += count_future_dates(sem_end, dow) * slots_per_day
+            # ── TOTAL_HELD: classes actually marked (present OR absent) for this subject ──
+            cur.execute("""
+                SELECT COUNT(*) FROM attendance
+                WHERE user_id=%s
+                AND ((subject_id=%s AND is_free_hour=0) OR (free_subject_id=%s AND is_free_hour=1))
+                AND class_date BETWEEN %s AND %s
+            """, (user_id, subj_id, subj_id, sem_start, today))
+            total_held = cur.fetchone()[0]
+
+            # ── GRAND TOTAL: ALL scheduled classes from sem_start to sem_end (past + future) ──
+            # This is the "78" number — total the subject is scheduled for the whole semester
+            grand_total = 0
+            if sem_id_val:
+                cur.execute("""
+                    SELECT day_of_week, COUNT(*) as slots FROM timetable
+                    WHERE user_id=%s AND subject_id=%s AND semester_id=%s AND is_free=0
+                    GROUP BY day_of_week
+                """, (user_id, subj_id, sem_id_val))
+            else:
+                cur.execute("""
+                    SELECT day_of_week, COUNT(*) as slots FROM timetable
+                    WHERE user_id=%s AND subject_id=%s AND is_free=0
+                    GROUP BY day_of_week
+                """, (user_id, subj_id))
+            for row in cur.fetchall():
+                dow, slots_per_day = row[0], row[1]
+                grand_total += count_class_dates(sem_start, sem_end, dow) * slots_per_day
+
+            # future_classes = remaining classes from tomorrow to sem_end
+            future_classes = max(0, grand_total - total_held)
 
             pred = predict(attended, total_held, future_classes)
             results.append({"id": subj_id, "name": subj[1], "attended": attended,
-                            "total_held": total_held, "prediction": pred})
+                            "total_held": total_held, "grand_total": grand_total,
+                            "future_classes": future_classes, "prediction": pred})
 
         danger = sum(1 for r in results if r['prediction']['risk'] == 'DANGER')
         high   = sum(1 for r in results if r['prediction']['risk'] == 'HIGH')
         safe   = sum(1 for r in results if r['prediction']['risk'] == 'SAFE')
 
-        cur.execute("SELECT submission_date FROM daily_submissions WHERE user_id=%s", (user_id,))
+        # Only fetch submissions within this semester range
+        cur.execute("SELECT submission_date FROM daily_submissions WHERE user_id=%s AND submission_date BETWEEN %s AND %s", (user_id, sem_start, today))
         submitted_dates = {row[0] for row in cur.fetchall()}
 
         sem_id = get_active_semester_id(user_id)
@@ -520,16 +526,20 @@ def dashboard():
             cur.execute("SELECT DISTINCT day_of_week FROM timetable WHERE user_id=%s", (user_id,))
         tt_days = {row[0] for row in cur.fetchall()}
 
-        cur.execute("SELECT sat_date FROM saturday_config WHERE user_id=%s AND is_working=1 AND sat_date < %s", (user_id, today))
+        cur.execute("SELECT sat_date FROM saturday_config WHERE user_id=%s AND is_working=1 AND sat_date BETWEEN %s AND %s", (user_id, sem_start, today))
         working_saturdays = {row[0] for row in cur.fetchall()}
 
         pending_count = 0
         d = sem_start
         while d < today:
+            dow = d.weekday()
+            if dow == 6:  # Skip Sundays
+                d += timedelta(days=1)
+                continue
             if d not in submitted_dates:
-                if d.weekday() in tt_days:
+                if dow == 5:  # Saturday — count ALL unsubmitted saturdays
                     pending_count += 1
-                elif d in working_saturdays:
+                elif dow in tt_days:
                     pending_count += 1
             d += timedelta(days=1)
 
@@ -589,6 +599,21 @@ def mark_attendance():
             return redirect(url_for('dashboard'))
 
         if request.method == 'POST':
+            action = request.form.get('action', 'save')
+
+            # ── HOLIDAY: wipe attendance + mark submitted ──
+            if action == 'holiday':
+                cur.execute("DELETE FROM attendance WHERE user_id=%s AND class_date=%s AND timetable_id > 0", (user_id, mark_date))
+                cur.execute("""
+                    INSERT INTO daily_submissions (user_id, submission_date)
+                    VALUES (%s,%s)
+                    ON CONFLICT (user_id, submission_date) DO NOTHING
+                """, (user_id, mark_date))
+                conn.commit()
+                flash(f'{mark_date.strftime("%A, %d %b %Y")} marked as Holiday 🏖️ — no attendance recorded.', 'success')
+                return redirect(url_for('dashboard'))
+
+            # ── SAVE ATTENDANCE ──
             # Delete all existing attendance for this date before re-inserting
             cur.execute("DELETE FROM attendance WHERE user_id=%s AND class_date=%s AND timetable_id > 0", (user_id, mark_date))
 
@@ -670,7 +695,8 @@ def past_dates():
 
     conn, cur = get_cursor()
     try:
-        cur.execute("SELECT submission_date FROM daily_submissions WHERE user_id=%s", (user_id,))
+        # Only fetch submissions within this semester range
+        cur.execute("SELECT submission_date FROM daily_submissions WHERE user_id=%s AND submission_date BETWEEN %s AND %s", (user_id, sem_start, today))
         submitted = {row[0] for row in cur.fetchall()}
         sem_id = get_active_semester_id(user_id)
         if sem_id:
@@ -688,14 +714,32 @@ def past_dates():
     d = sem_start
     while d < today:
         dow = d.weekday()
+        if dow == 6:  # Skip Sundays always
+            d += timedelta(days=1)
+            continue
         if d not in submitted:
-            if dow == 5:
+            if dow == 5:  # Saturday — show ALL past saturdays so user can setup & mark
                 pending.append({"date": d, "is_saturday": True, "configured": d in working_saturdays})
             elif dow in tt_days:
                 pending.append({"date": d, "is_saturday": False, "configured": True})
         d += timedelta(days=1)
 
-    return render_template("past_dates.html", pending_dates=pending[-30:], user=user)
+    # Pagination — show all dates, 30 per page
+    page = int(request.args.get('page', 1))
+    per_page = 30
+    total = len(pending)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    pending_page = pending[start:end]
+
+    return render_template("past_dates.html",
+        pending_dates=pending_page,
+        user=user,
+        page=page,
+        total_pages=total_pages,
+        total=total)
 
 # ─────────────────────────────────────────────────────
 # VIEW TIMETABLE
@@ -1405,4 +1449,3 @@ def edit_timetable():
 
 if __name__ == '__main__':
     app.run(debug=True)
- 

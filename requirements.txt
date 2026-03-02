@@ -1,7 +1,5 @@
- 
 flask
 psycopg2-binary
 werkzeug
 python-dotenv
 gunicorn
- 

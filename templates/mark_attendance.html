@@ -57,13 +57,27 @@
         </div>
         {% endfor %}
     </div>
-    <a href="{{ url_for('mark_attendance', date=mark_date.isoformat(), edit=1) }}" class="btn-secondary">✏️ Edit</a>
-    <a href="{{ url_for('dashboard') }}" class="btn-primary">Dashboard</a>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:12px;">
+        <a href="{{ url_for('mark_attendance', date=mark_date.isoformat(), edit=1) }}" class="btn-secondary">✏️ Edit</a>
+        <!-- Holiday button on submitted view -->
+        <form method="POST" style="margin:0;" onsubmit="return confirm('Mark this day as a Holiday? All attendance will be cleared.')">
+            <input type="hidden" name="action" value="holiday">
+            <button type="submit" class="btn-holiday">🏖️ Mark as Holiday</button>
+        </form>
+        <a href="{{ url_for('dashboard') }}" class="btn-primary">Dashboard</a>
+    </div>
 </div>
 
 {% else %}
 {# ═══════════ MARK FORM ═══════════ #}
 <form method="POST" id="mark-form">
+<input type="hidden" name="action" value="save" id="form-action">
+
+{# ── HOLIDAY BANNER ── #}
+<div class="holiday-banner">
+    <span>📅 Was this day a holiday or college closed?</span>
+    <button type="button" class="btn-holiday" onclick="markHoliday()">🏖️ Mark as Holiday</button>
+</div>
 
 {% if is_saturday %}
 {# ─── SATURDAY: step-by-step ─── #}
@@ -90,7 +104,6 @@
         </div>
 
         {% if is_free %}
-        {# Free hour — ask if class happened #}
         <div id="fhq_{{ li }}" class="free-hour-question">
             <p>Did any class happen during this Free Hour?</p>
             <div class="free-choice-btns">
@@ -120,7 +133,6 @@
         <input type="hidden" name="skip_free_{{ tt_id }}" id="skip_free_{{ li }}" value="1">
 
         {% else %}
-        {# Normal period — substitution dropdown + present/absent #}
         <div class="subst-block">
             <label class="subst-label">📖 Subject for this period
                 <span class="subst-hint-text">(change if a substitute teacher came)</span>
@@ -180,7 +192,6 @@
         {% set orig_name= slot[5] %}
 
         <div class="period-row {{ 'free-row' if is_free else '' }}">
-            {# Left: period badge + time + subject name #}
             <div class="period-left">
                 <span class="period-badge">P{{ period }}</span>
                 <div class="period-details">
@@ -188,10 +199,8 @@
                 </div>
             </div>
 
-            {# Right: dropdown + present/absent #}
             <div class="period-right-area">
                 {% if is_free %}
-                {# Free hour inline #}
                 <select name="free_subject_{{ tt_id }}" class="free-subject-select-inline"
                         id="wfsel_{{ tt_id }}" onchange="syncFreeSkip('{{ tt_id }}')">
                     <option value="">No class (skip)</option>
@@ -215,7 +224,6 @@
                 </div>
 
                 {% else %}
-                {# Normal period — substitution dropdown #}
                 <div class="wd-subst-wrap">
                     <select name="sub_subject_{{ tt_id }}" class="wd-subst-select"
                             onchange="wdSubstTag(this,'{{ orig_id }}','wtag_{{ tt_id }}')">
@@ -269,6 +277,14 @@ function updToggle(radio) {
     radio.nextElementSibling.classList.add(radio.value === 'present' ? 'selected-present' : 'selected-absent');
 }
 document.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', () => updToggle(r)));
+
+/* ── Mark as Holiday ── */
+function markHoliday() {
+    if (confirm('Mark this day as a Holiday? All attendance for this day will be cleared and it will be removed from pending.')) {
+        document.getElementById('form-action').value = 'holiday';
+        document.getElementById('mark-form').submit();
+    }
+}
 
 /* ── Saturday step navigation ── */
 function nextStep(cur) {
@@ -334,9 +350,40 @@ function markAllAbsent() {
 function goToDate() {
     const d = document.getElementById('date-picker').value;
     if (!d) return;
-    const day = new Date(d + 'T00:00:00').getDay(); // 6 = Saturday
+    const day = new Date(d + 'T00:00:00').getDay();
     window.location.href = (day === 6) ? '/saturday?date=' + d : '/mark?date=' + d;
 }
 </script>
+
+<style>
+.holiday-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    font-size: .88rem;
+    color: #7a5c00;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.btn-holiday {
+    background: #ff7043;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-size: .84rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .2s;
+    text-decoration: none;
+    display: inline-block;
+}
+.btn-holiday:hover { opacity: .85; }
+</style>
 {% endif %}
 {% endblock %}
