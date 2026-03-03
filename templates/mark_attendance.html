@@ -139,6 +139,7 @@
             </label>
             <select name="sub_subject_{{ tt_id }}" class="subst-select" id="subsel_sat_{{ li }}"
                     onchange="satSubstHint(this, '{{ orig_id }}', '{{ orig_name }}', 'shint_sat_{{ li }}')">
+                <option value="FREE" {{ 'selected' if sub_chosen.get(tt_id) == 'FREE' }}>🔓 Free Hour (no class)</option>
                 {% for sid, sname in subjects_dict.items() %}
                 <option value="{{ sid }}" {{ 'selected' if sid == sub_chosen.get(tt_id, orig_id) }}>
                     {{ sname }}{% if sid == orig_id %} ★{% endif %}
@@ -227,6 +228,7 @@
                 <div class="wd-subst-wrap">
                     <select name="sub_subject_{{ tt_id }}" class="wd-subst-select"
                             onchange="wdSubstTag(this,'{{ orig_id }}','wtag_{{ tt_id }}')">
+                        <option value="FREE" {{ 'selected' if sub_chosen.get(tt_id) == 'FREE' }}>🔓 Free Hour (no class)</option>
                         {% for sid, sname in subjects_dict.items() %}
                         <option value="{{ sid }}" {{ 'selected' if sid == sub_chosen.get(tt_id, orig_id) }}>
                             {{ sname }}{% if sid == orig_id %} ★{% endif %}
@@ -335,7 +337,16 @@ function satSubstHint(sel, origId, origName, hintId) {
 /* ── Substitution tag (weekday) ── */
 function wdSubstTag(sel, origId, tagId) {
     const t = document.getElementById(tagId);
-    if (t) t.style.display = (sel.value && sel.value !== origId) ? 'inline-block' : 'none';
+    if (!t) return;
+    if (sel.value === 'FREE') {
+        t.style.display = 'inline-block';
+        t.textContent = '🔓 free';
+    } else if (sel.value && sel.value !== origId) {
+        t.style.display = 'inline-block';
+        t.textContent = '↔ sub';
+    } else {
+        t.style.display = 'none';
+    }
 }
 
 /* ── Mark all (weekday) ── */
