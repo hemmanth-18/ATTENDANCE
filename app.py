@@ -167,25 +167,25 @@ def predict(attended, total_held, future_classes):
     if future_classes == 0:
         if current_pct >= 75:
             risk = "SAFE"
-            message = f"✅ Semester complete! Final attendance: {current_pct}% — above 75%."
+            message = f" Semester complete! Final attendance: {current_pct}% — above 75%."
         else:
             risk = "DANGER"
-            message = f"🚨 Semester complete. Final attendance: {current_pct}% — below 75%."
+            message = f" Semester complete. Final attendance: {current_pct}% — below 75%."
     elif best_possible_pct < 75:
         risk = "DANGER"
-        message = f"🚨 Cannot reach 75% even attending all remaining. Best possible: {best_possible_pct}%."
+        message = f" Cannot reach 75% even attending all remaining. Best possible: {best_possible_pct}%."
     elif can_miss <= 0:
         risk = "HIGH"
-        message = f"⚠️ Must attend ALL {future_classes} remaining classes. Don't miss even one!"
+        message = f"Must attend ALL {future_classes} remaining classes. Don't miss even one!"
     elif can_miss <= 2:
         risk = "HIGH"
-        message = f"⚠️ Only {can_miss} more miss(es) allowed. Attend next {need_to_attend} without fail."
+        message = f" Only {can_miss} more miss(es) allowed. Attend next {need_to_attend} without fail."
     elif can_miss <= 5:
         risk = "MEDIUM"
-        message = f"🔶 Be careful! Can miss {can_miss} more. Still need {need_to_attend} more classes."
+        message = f" Be careful! Can miss {can_miss} more. Still need {need_to_attend} more classes."
     else:
         risk = "SAFE"
-        message = f"✅ You're safe! Can miss up to {can_miss} more classes and stay above 75%."
+        message = f" You're safe! Can miss up to {can_miss} more classes and stay above 75%."
 
     return {
         "current_pct": current_pct,
