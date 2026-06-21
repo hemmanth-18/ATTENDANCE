@@ -1,12 +1,12 @@
 import os
 import math
 import time
+import re
 from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, timedelta, datetime
-import psycopg2
-import psycopg2.pool
+import pg8000.native
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,25 +23,114 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # ─────────────────────────────────────────────────────
-# DATABASE CONNECTION (Supabase / PostgreSQL)
+# DATABASE CONNECTION (Supabase / PostgreSQL via pg8000)
 # ─────────────────────────────────────────────────────
 
-db_pool = psycopg2.pool.SimpleConnectionPool(
-    1, 10,
-    os.environ.get('DATABASE_URL'),
-    sslmode='require'
-)
+def parse_db_url(url):
+    """Parse a postgresql:// URL into pg8000 connection kwargs."""
+    # Decode %40 -> @ in password
+    url = url.replace('%40', '@')
+    # postgresql://user:password@host:port/dbname
+    pattern = r'postgresql://([^:]+):(.+)@([^:/]+):(\d+)/(.+)'
+    m = re.match(pattern, url)
+    if not m:
+        raise ValueError(f"Cannot parse DATABASE_URL: {url}")
+    user, password, host, port, dbname = m.groups()
+    return dict(user=user, password=password, host=host, port=int(port), database=dbname)
+
+_DB_KWARGS = None
+
+def get_db_kwargs():
+    global _DB_KWARGS
+    if _DB_KWARGS is None:
+        db_url = os.environ.get('DATABASE_URL', '')
+        _DB_KWARGS = parse_db_url(db_url)
+    return _DB_KWARGS
+
+class _ConnWrapper:
+    """Wraps pg8000 native Connection to expose commit/rollback/close."""
+    def __init__(self, raw):
+        self._raw = raw
+
+    def commit(self):
+        self._raw.run('COMMIT')
+
+    def rollback(self):
+        try:
+            self._raw.run('ROLLBACK')
+        except Exception:
+            pass
+
+    def close(self):
+        try:
+            self._raw.close()
+        except Exception:
+            pass
+
+    def run(self, sql, *args, **kwargs):
+        return self._raw.run(sql, *args, **kwargs)
+
+
+class _CursorWrapper:
+    """Wraps _ConnWrapper to behave like a psycopg2 cursor."""
+    def __init__(self, conn):
+        self._conn = conn
+        self._rows = []
+        self._idx = 0
+
+    def execute(self, sql, params=None):
+        # Convert %s placeholders to :1, :2, ... for pg8000
+        if params:
+            counter = [0]
+            def replacer(m):
+                counter[0] += 1
+                return f':{counter[0]}'
+            sql = re.sub(r'%s', replacer, sql)
+            self._rows = self._conn.run(sql, *params)
+        else:
+            self._rows = self._conn.run(sql)
+        if self._rows is None:
+            self._rows = []
+        self._idx = 0
+
+    def fetchone(self):
+        if self._rows and self._idx < len(self._rows):
+            row = self._rows[self._idx]
+            self._idx += 1
+            return row
+        return None
+
+    def fetchall(self):
+        rows = self._rows[self._idx:] if self._rows else []
+        self._idx = len(self._rows) if self._rows else 0
+        return rows
+
+    def close(self):
+        pass
+
 
 def get_db():
-    return db_pool.getconn()
+    kwargs = get_db_kwargs()
+    raw = pg8000.native.Connection(
+        kwargs['user'],
+        password=kwargs['password'],
+        host=kwargs['host'],
+        port=kwargs['port'],
+        database=kwargs['database'],
+        ssl_context=True
+    )
+    return _ConnWrapper(raw)
 
 def release_db(conn):
-    db_pool.putconn(conn)
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 def get_cursor():
     """Returns (conn, cursor). Always call release_db(conn) when done."""
     conn = get_db()
-    cur = conn.cursor()
+    cur = _CursorWrapper(conn)
     return conn, cur
 
 # ─────────────────────────────────────────────────────
