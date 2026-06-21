@@ -288,6 +288,24 @@ def predict(attended, total_held, future_classes):
     }
 
 # ─────────────────────────────────────────────────────
+# HEALTH CHECK (debug — shows exact DB error on Vercel)
+# ─────────────────────────────────────────────────────
+
+@app.route('/health')
+def health():
+    import traceback
+    db_url = os.environ.get('DATABASE_URL', 'NOT SET')
+    masked = db_url[:30] + '...' if len(db_url) > 30 else db_url
+    try:
+        conn, cur = get_cursor()
+        cur.execute("SELECT 1")
+        result = cur.fetchone()
+        release_db(conn)
+        return jsonify({"status": "ok", "db": "connected", "db_url_prefix": masked, "result": str(result)})
+    except Exception as e:
+        return jsonify({"status": "error", "db_url_prefix": masked, "error": str(e), "trace": traceback.format_exc()}), 500
+
+# ─────────────────────────────────────────────────────
 # AUTH
 # ─────────────────────────────────────────────────────
 
